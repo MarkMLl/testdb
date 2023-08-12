@@ -1,3 +1,5 @@
+(* Lazarus+FPC 2.2.4+3.2.2 on Linux Lazarus+FPC 2.2.4+3.2.2 on Linux Lazarus+FP *)
+
 unit Unit1;
 
 (* This is an absolutely minimal program to test what happens when DB-aware     *)
@@ -46,6 +48,7 @@ type
     DataSource1: TDataSource;
     DBGrid1: TDBGrid;
     DBNavigator1: TDBNavigator;
+    LabelIsolation: TLabel;
     PQTEventMonitor1: TPQTEventMonitor;
     Timer1: TTimer;
     LabeledEditTable: TLabeledEdit;
@@ -91,6 +94,9 @@ procedure TForm1.ButtonConnectClick(Sender: TObject);
 const
   commitOnDisconnect= false;
 
+var
+  scratch: string;
+
 begin
   if ButtonConnect.Caption = 'Connect' then begin
 
@@ -105,13 +111,26 @@ begin
     PQConnection1.UserName := LabeledEditUser.Text;
     PQConnection1.Password := LabeledEditPassword.Text;
 
-// TODO : Nobody really seems to know whether TSQLTransaction, TSQLQuery etc. supports transaction isolation.
-// See https://forum.lazarus.freepascal.org/index.php?topic=14756.0 for a
-// discussion of this as it applies to Firebird, but it doesn't appear to be
-// portable.
-//
-// Also https://lists.lazarus-ide.org/pipermail/lazarus/2010-December/188178.html
-//
+(* There's no direct support in the Lazarus/LCL standard components-            *)
+(* TSQLTransaction, TSQLQuery etc.- for setting transaction isolation. See      *)
+(* https://forum.lazarus.freepascal.org/index.php?topic=14756.0 for discussion  *)
+(* of this applied to Firebird, but it doesn't appear to be portable. Also      *)
+(* https://lists.lazarus-ide.org/pipermail/lazarus/2010-December/188178.html    *)
+(*                                                                              *)
+(* From the POV of PostgreSQL, https://github.com/lib/pq/issues/261 and         *)
+(* https://www.postgresql.org/docs/current/runtime-config-client.html are       *)
+(* relevant. Also https://www.postgresql.org/docs/12/libpq-connect.html which   *)
+(* suggests that it shouldn't go in the connection object so I'm guessing...    *)
+
+    SQLTransaction1.Params.Clear;
+    scratch := '';
+    if ListBoxIsolation.ItemIndex >= 0 then
+      scratch := '''' +  Trim(ListBoxIsolation.Items[ListBoxIsolation.ItemIndex]) + '''';
+    if scratch <> '' then
+      SQLTransaction1.Params.Append('default_transaction_isolation=' + scratch);
+    SQLQuery1.Open;                     (* Remaining components auto-activated  *)
+    PQTEventMonitor1.Registered := true;        (* ...except for this one.      *)
+
 // Hence if running psql to a server 172.27.172.128
 //
 // markMLl=> SELECT * FROM pg_stat_activity where application_name = 'psql';
@@ -127,9 +146,6 @@ begin
 // 5432,55180
 // 5432 , 55180 : USERID : UNIX :postgres
 
-    SQLQuery1.Open;                     (* Remaining components activated automatically *)
-    PQTEventMonitor1.Registered := true;
-
 (* Clear the displayed password as soon as it is no longer needed; note the     *)
 (* attempt at overwriting it in situ so as not to leave a freed copy on the     *)
 (* heap. Fudge a few more bits of the GUI.                                      *)
@@ -140,6 +156,13 @@ begin
     OperationListPopulate(self);
     ListBoxOperation.Enabled := true;
     ButtonOperate.Enabled := true;
+    LabeledEditServer.Enabled := false;
+    LabeledEditDatabase.Enabled := false;
+    ListBoxIsolation.Enabled := false;
+    LabelIsolation.Enabled := false;
+    LabeledEditTable.Enabled := false;
+    LabeledEditUser.Enabled := false;
+    LabeledEditPassword.Enabled := false;
     ButtonConnect.Caption := 'Disconnect'
   end else begin
     SQLQuery1.ApplyUpdates;
@@ -148,8 +171,16 @@ begin
     else
       SQLTransaction1.Rollback;
     PQConnection1.Connected := false;   (* Remaining components deactivated automatically *)
+    PQTEventMonitor1.Registered := false; (* ...except for this one             *)
     PQConnection1.Password := PadRight('', Length(PQConnection1.Password));
     PQConnection1.Password := '';
+    LabeledEditPassword.Enabled := true;
+    LabeledEditUser.Enabled := true;
+    LabeledEditTable.Enabled := true;
+    LabelIsolation.Enabled := true;
+    ListBoxIsolation.Enabled := true;
+    LabeledEditDatabase.Enabled := true;
+    LabeledEditServer.Enabled := true;
     ButtonOperate.Enabled := false;
     ListBoxOperation.Enabled := false;
     ButtonConnect.Caption := 'Connect'
@@ -258,7 +289,7 @@ end { TForm1.StatusListPopulate } ;
 procedure TForm1.Timer1Timer(Sender: TObject);
 
 const
-  pollServer: integer= 0;               (* Static variable                      *)
+  pollServer: longint= 0;               (* Static variable                      *)
   howOften= 255;                        (* 50 ticks/sec hence roughly every 5 secs *)
 
 // TODO : Stretch brief changes of state.
@@ -267,25 +298,32 @@ const
 // glitches are longer than the timer period (typically 20 mSec).
 
 begin
-  if CheckGroupStatus.Items.Count = 0 then
-    StatusListPopulate(self);           (* Keep in step with "Items" above      *)
-  CheckGroupStatus.Checked[0] := PQConnection1.Connected;
-  if pollServer = 0 then
-    CheckGroupStatus.Checked[1] := DBHealthy(PQConnection1);
-  pollServer := (pollServer + 1) mod howOften;
-  CheckGroupStatus.Checked[2] := SQLTransaction1.Active;
-  CheckGroupStatus.Checked[3] := SQLQuery1.Active;
-  CheckGroupStatus.Checked[4] := DataSource1.Enabled;
-  CheckGroupStatus.Checked[5] := PQTEventMonitor1.Registered;
-  CheckGroupStatus.Checked[6] := PQTEventMonitor1.Tag > 0;
+  Timer1.Enabled := false;
+  try
+    if CheckGroupStatus.Items.Count = 0 then begin
+      StatusListPopulate(self);         (* Keep in step with "Items" above      *)
+      pollServer := 0
+    end;
+    CheckGroupStatus.Checked[0] := PQConnection1.Connected;
+    if pollServer = 0 then
+      CheckGroupStatus.Checked[1] := DBHealthy(PQConnection1);
+    pollServer := (pollServer + 1) mod howOften;
+    CheckGroupStatus.Checked[2] := SQLTransaction1.Active;
+    CheckGroupStatus.Checked[3] := SQLQuery1.Active;
+    CheckGroupStatus.Checked[4] := DataSource1.Enabled;
+    CheckGroupStatus.Checked[5] := PQTEventMonitor1.Registered;
+    CheckGroupStatus.Checked[6] := PQTEventMonitor1.Tag > 0;
 
 (* As an aid to debugging, display the last-known client-side port that was     *)
 (* connected to the server's (e.g.) 5432 as a hint. This should match e.g.      *)
 (*                                                                              *)
 (* markMLl=> SELECT * FROM pg_stat_activity WHERE datname = 'open2300';         *)
 
-  CheckGroupStatus.Hint := IntToStr(LocalPort);
-  CheckGroupStatus.ShowHint := true
+    CheckGroupStatus.Hint := IntToStr(LocalPort);
+    CheckGroupStatus.ShowHint := true
+  finally
+    Timer1.Enabled := true
+  end
 end { TForm1.IdleTimer1Timer } ;
 
 

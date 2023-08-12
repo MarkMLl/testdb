@@ -52,6 +52,11 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="DBHealth"/>
       </Unit>
+      <Unit>
+        <Filename Value="pqconnection2.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="PQConnection2"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

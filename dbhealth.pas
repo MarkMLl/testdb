@@ -1,3 +1,5 @@
+(* Lazarus+FPC 2.2.4+3.2.2 on Linux Lazarus+FPC 2.2.4+3.2.2 on Linux Lazarus+FP *)
+
 unit DBHealth;
 
 (* Determine the client-side port number being used by the TCP connection to    *)
@@ -5,6 +7,7 @@ unit DBHealth;
 (* (port 113).                                                  MarkMLl         *)
 
 {$mode ObjFPC}{$H+}
+{$modeswitch advancedrecords}           (* Needed for in4_addr.IsNull only      *)
 
 interface
 
@@ -23,191 +26,184 @@ function DBHealthy(pq: TPQConnection): boolean;
 implementation
 
 uses
-  postgres3, Sockets, SQLDb, UnixType { , Errors }, Resolve, NetDb;
-
-
-type
-  TPQConnection2= class(TPQConnection)
-  protected
-    function GetLocalPort(): integer;
-    function GetServerPort(): integer;
-  end;
+  PQConnection2, Sockets;
 
 (* Note that PGConn : PPGConn; -> postgres3types.inc -> TPGconn is grossly out  *)
 (* of date, but it is defined (e.g. in libpq-int.h) as being internal to libpq  *)
 (* so strictly FPC shouldn't be attempting to do anything with it at all.       *)
-
-
-(********************************************************************************)
 (*                                                                              *)
-(* I haven't a clue when I originally wrote this lookup stuff: probably in the  *)
-(* late '90s using Delphi. But it works...                                      *)
-(*                                                                              *)
-(********************************************************************************)
-
+(* The result of this is that the only way we can access the state we need is   *)
+(* to subclass QPConnection, and access some of the shared library entry points *)
+(* directly.                                                                    *)
 
 type
-  Ip4Address= cuint32;
-  TIpMath= cuint32;
+  in4_addr= in_addr;                    (* Explicitly a 32-bit IP4 address      *)
+  TAddressArray= array of in4_addr;
 
+const
+  in4_null: in4_addr= (S_Addr: 0);      (* Initialise one field by name,        *)
 
-procedure debugMsg(const s: AnsiString);
+type
+  Tin4_addrHelper= record helper for in4_addr
+    function IsNull: boolean;
+  end;
+
+operator = (const a, b: in4_addr): boolean; inline;
 
 begin
-//  WriteLn(StdErr, s)
-end { debugMsg } ;
+  result := a.s_addr = b.s_addr
+end { in4_addr = } ;
 
 
-FUNCTION inet_ntoa(ipAddr: In_addr): STRING;
+function Tin4_addrHelper.IsNull: boolean; inline;
 
-(* Emulate the corresponding Winsock function. Implementation is      *)
-(* inefficient but avoids assignment of large numbers (>= $80000000)  *)
-(* to 32-bit variables.                                               *)
-
-VAR     ip32: TIpMath;                  (* Bytes in host order        *)
-
-BEGIN
-  ip32:= NtoHL(ipAddr.S_addr);
-  RESULT:= IntToStr((ip32 SHR 24) MOD 256) + '.';
-  RESULT:= RESULT + IntToStr((ip32 SHR 16) MOD 256) + '.';
-  RESULT:= RESULT + IntToStr((ip32 SHR 8) MOD 256) + '.';
-  RESULT:= RESULT + IntToStr(ip32 MOD 256)
-END { Inet_ntoa } ;
+begin
+  result := self = in4_null
+end { Tin4_addrHelper.IsNull } ;
 
 
-VAR     ipAddressCount: INTEGER;
-        ipAddressAlternative: TIpMath;
-
-
-(* Resolve a hostname or an IP4 dotted-quad address, generally trying to "do the
-  right thing".
+(* Append a word to an address array, discarding duplicates.
 *)
-function LookUpHost4(const hostname: AnsiString): Ip4Address;
+operator + (const a: TAddressArray; const l: in4_addr): TAddressArray;
 
-(* Hide unpleasantness. Result is in network order, resolves both names *)
-(* and IP addresses.                                                    *)
+var
+  i: integer;
 
-VAR
-  resolver: THostResolver;
-
-
-  FUNCTION numericResolve(CONST hostname: STRING; VAR addr: TIpMath): BOOLEAN;
-
-  (* Convert the parameter to a network-ordered IP address if possible, *)
-  (* returning TRUE. On failure return FALSE, the address is undefined  *)
-  (* in this case.                                                      *)
-
-  VAR   left, right: STRING;
-        dot, temp: INTEGER;
-
-  BEGIN
-    RESULT:= FALSE;
-    addr:= 0;
-    right:= Trim(hostname) + '.';
-    dot:= Pos('.', right);
-    WHILE dot > 0 DO BEGIN
-      left:= right;
-      SetLength(left, dot - 1);
-      Delete(right, 1, dot);
-      IF (Length(left) < 1) OR (Length(left) > 3) THEN
-        EXIT;
-      TRY
-        temp:= StrToInt(left) MOD 256
-      EXCEPT
-        EXIT
-      END;
-      addr:= (addr SHL 8) OR temp;
-      dot:= Pos('.', right)
-    END;
-    RESULT:= right = '';
-    addr:= HtoNL(addr)
-  END { numericResolve } ;
+begin
+  result := a;
+  for i := 0 to High(result) do
+    if l = result[i] then
+      exit;
+  SetLength(result, Length(result) + 1);
+  result[High(result)] := l
+end { + } ;
 
 
-BEGIN
-  RESULT:= 0;
-  ipAddressCount:= 0;
-  ipAddressAlternative:= 0;
+(* Return an array comprising the IP addresses allocated to the current host,
+  in an indeterminate but non-random order.
+*)
+function SelfAddressList(): TAddressArray;
 
-(* This is straight from testrhre.pp. I really do not like this idiom at  *)
-(* all since it makes it impossible to see whether a failure is because   *)
-(* Create() has returned NIL or something's gone wrong later.             *)
+// Pinched from dialarm/trunk/udp79backbone.pas. There might be something a bit
+// more conventional somewhere in List3264.
 
-//  With THostResolver.Create(Nil) do
-//    try
-//      If AddressLookup(hostname) then
-//        RESULT:= Addresses[0].S_addr
-//    finally
-//      Free
-//    end
+// TODO : Something better than using /proc/net/fib_trie, and supporting IP6.
 
-  resolver:= THostResolver.Create(Nil);
+var
+  addressTable: TStringList;
+  i: integer;
+  a: in4_addr;
+  scratch: string;
+
+begin
+  SetLength(result, 0);
+  if not FileExists('/proc/net/fib_trie') then
+    exit;
+  addressTable := TStringList.Create;
   try
-    IF resolver = NIL THEN
-      debugMsg('THostResolver.Create() -> NIL');
-    TRY
-
-(* Linux resolver.AddressLookup() doesn't appear to like converting       *)
-(* specials, in particular broadcast addresses.                           *)
-
-      IF numericResolve(hostname, RESULT) THEN BEGIN
-        ipAddressCount:= 1;
-        EXIT
-      END;
-
-(* Using WinSock resolver.NameLookup() appears to resolve both names    *)
-(* and IP addresses, under Linux (and probably other unices) only names.*)
-(* As a general point try the numeric form first as being the faster    *)
-(* and easier to reject and then try a name lookup.                     *)
-
-(* Note that some versions of resolve.pas incorrectly return addresses  *)
-(* in network rather than host order.                                   *)
-
-      If resolver.AddressLookup(hostname) then BEGIN
-        ipAddressCount:= resolver.AddressCount;
-        IF resolver.AddressCount < 1 THEN
-          debugMsg('resolver.AddressCount < 1');
-(*$IFNDEF HAS_NETORDERRESOLVER *)
-        debugMsg('resolver.Addresses[0] = ' + inet_ntoa(in_addr(HtoNL(resolver.Addresses[0].S_addr))));
-        RESULT:= TIpMath(HtoNL(resolver.Addresses[0].S_addr));
-        IF ipAddressCount > 1 THEN
-          ipAddressAlternative:= TIpMath(HtoNL(resolver.Addresses[Random(ipAddressCount - 1) + 1].S_addr));
-(*$ELSE                        *)
-        debugMsg('resolver.Addresses[0] = ' + inet_ntoa(resolver.Addresses[0]));
-        RESULT:= TIpMath(resolver.Addresses[0].S_addr);
-        IF ipAddressCount > 1 THEN
-          ipAddressAlternative:= TIpMath(resolver.Addresses[Random(ipAddressCount - 1) + 1].S_addr);
-(*$ENDIF                       *)
-        EXIT
-      END ELSE
-        debugMsg('resolver.AddressLookup(address) -> FALSE');
-      If resolver.NameLookup(hostname) then BEGIN
-        ipAddressCount:= resolver.AddressCount;
-        IF resolver.AddressCount < 1 THEN
-          debugMsg('resolver.AddressCount < 1');
-(*$IFNDEF HAS_NETORDERRESOLVER *)
-        debugMsg('resolver.Addresses[0] = ' + inet_ntoa(in_addr(HtoNL(resolver.Addresses[0].S_addr))));
-        RESULT:= TIpMath(HtoNL(resolver.Addresses[0].S_addr));
-        IF ipAddressCount > 1 THEN
-          ipAddressAlternative:= TIpMath(HtoNL(resolver.Addresses[Random(ipAddressCount - 1) + 1].S_addr))
-(*$ELSE                        *)
-        debugMsg('resolver.Addresses[0] = ' + inet_ntoa(resolver.Addresses[0]));
-        RESULT:= TIpMath(resolver.Addresses[0].S_addr);
-        IF ipAddressCount > 1 THEN
-          ipAddressAlternative:= TIpMath(resolver.Addresses[Random(ipAddressCount - 1) + 1].S_addr);
-(*$ENDIF                       *)
-      END ELSE
-        debugMsg('resolver.NameLookup(name) -> FALSE')
-    EXCEPT
-      ipAddressCount:= 0
-    END
+    try
+      addressTable.LoadFromFile('/proc/net/fib_trie')
+    except
+      exit
+    end;
+    for i := 0 to addressTable.Count - 1 do
+      if (Pos('host LOCAL', addressTable[i]) > 0) and (i > 0) then begin
+        scratch := Trim(addressTable[i - 1]);
+        if Pos('-- ', scratch) > 0 then begin
+          while (scratch <> '') and not (scratch[1] in ['.', '0'..'9']) do
+            Delete(scratch, 1, 1);
+          a := in4_addr(StrToHostAddr(scratch));
+          scratch := HostAddrToStr(in4_addr(a));        (* For debugging        *)
+          if a <> in4_null then
+            result += a
+        end
+      end
   finally
-    resolver.Free
+    addressTable.Free;
   end
-END { LookUpHost4 } ;
+end { SelfAddressList } ;
 
 
-(********************************************************************************)
+(* Test that the indicated client port is still in use, and that the IP address
+  being used by the client end of the database connection still appears in the
+  interface list.
+
+  This should detect cases where e.g. an ISP has changed the IP address of a
+  domestic installation.
+*)
+function testClientport(clientPort: integer; clientAddr4: cardinal): boolean;
+
+var
+  addressList: TAddressArray;
+  i: integer;
+
+begin
+  result := false;
+// TODO : Check client port (somehow).
+  addressList := SelfAddressList;
+  for i := 0 to Length(addressList) - 1 do
+    if addressList[i] = in4_addr(clientAddr4) then
+      exit(true)
+end { testClientport } ;
+
+
+(* Do an ident (port 113) check against the port and IP address being used by
+  the server end of the database connection.
+
+  This should detect cases where e.g. a server daemon process has timed out
+  since a laptop has been in sleep state for an extended period.
+*)
+function testServerPort(port, remotePort: integer; remoteHost: cardinal): boolean;
+
+var
+  sock: TSocket;
+  sockaddr: sockaddr_in;
+  textIn, textOut: Text;
+  ident: AnsiString;
+
+begin
+  result := false;
+  if remoteHost = $ffffffff then
+    exit;
+  sock:= fpSocket(PF_INET, SOCK_STREAM, 0);
+  if sock < 0 then
+    exit;
+  fillChar(sockaddr{%H-}, SizeOf(TSockAddr), 0);
+  sockaddr.sin_family := AF_INET;
+  sockaddr.sin_port := htons(113);
+  sockaddr.sin_addr.s_addr := htonl(remoteHost);
+
+// A lookup failure might indicate a permanent problem, or that a laptop etc.
+// is coming back to life after being in a sleep state. The latter of those
+// could be detected by periodic pings with the result saved with its UTC
+// timestamp, or by simply recovering UTC from the OS every second and looking
+// for discontinuities.
+//
+// I've spent more time than I intended on this, so am leaving it as-is since
+// overall the program is a useful proof-of-concept.
+
+  if not Sockets.Connect(sock, sockaddr, textIn{%H-}, textOut{%H-}) then
+    exit;
+  Reset(textIn);
+  Rewrite(textOut);
+  try
+    ident := IntToStr(remotePort) + ',' + IntToStr(port);
+    WriteLn(textOut, ident);
+
+// Absolutely no provision for timeout etc.
+
+// Write(HostAddrToStr(sockaddr.sin_addr), ':', ntohs(sockaddr.sin_port), '<');
+// Flush(output);
+    ReadLn(textIn, ident);
+// WriteLn(ident);
+// Flush(output);
+    result := Pos('USERID', ident) > 0
+  finally
+    CloseFile(textOut);
+    CloseFile(textIn);
+    CloseSocket(sock)
+  end
+end { testServerPort } ;
 
 
 (* Return true if the database connection passed as the parameter appears to be
@@ -217,124 +213,17 @@ function DBHealthy(pq: TPQConnection): boolean;
 
 var
   clientPort, serverPort: integer;
-
-
-  function testPort(port, remotePort: integer; const host: string): boolean;
-
-  var
-    sock: TSocket;
-    sockaddr: sockaddr_in;
-    textIn, textOut: Text;
-    ident: AnsiString;
-
-  begin
-    result := false;
-    sock:= fpSocket(PF_INET, SOCK_STREAM, 0);
-    if sock < 0 then
-      exit;
-    fillChar(sockaddr, SizeOf(TSockAddr), 0);
-    sockaddr.sin_family := AF_INET;
-    sockaddr.sin_port := htons(113);
-
-// I don't know whether this is really needed, or if there is an easy way of
-// getting the IP address actually being used by the server. In any event, it
-// could usefully be cached... although it is also a useful alternative to a
-// ping which would need the binary to be blessed with elevated capabilities.
-
-    sockaddr.sin_addr.s_addr := LookupHost4(host);
-// TODO : Consider caching this particularly if ping is implemented.
-
-// A lookup failure might indicate a permanent problem, or that a laptop etc.
-// is coming back to life after being in a sleep state. The latter of those
-// could be detected by periodic pings (but see above) with the result saved
-// with its UTC timestamp, or by simply recovering UTC from the OS every second
-// and looking for discontinuities.
-//
-// I've spent more time than I intended on this, so am leaving it as-is since
-// overall the program is a useful proof-of-concept.
-
-    if not Connect(sock, sockaddr, textIn, textOut) then
-      exit;
-    Reset(textIn);
-    Rewrite(textOut);
-    try
-      ident := IntToStr(remotePort) + ',' + IntToStr(port);
-      WriteLn(textOut, ident);
-// WriteLn('> ', ident);
-
-// Absolutely no provision for timeout etc.
-
-      ReadLn(textIn, ident);
-// WriteLn('< ', ident);
-      result := Pos('USERID', ident) > 0
-    finally
-      CloseFile(textOut);
-      CloseFile(textIn);
-      CloseSocket(sock)
-    end
-  end { testPort } ;
-
+  clientAddr4, serverAddr4: cardinal;
 
 begin
   clientPort := TPQConnection2(pq).GetLocalPort();
-  LocalPort := clientPort;              (* For debugging                        *)
+  LocalPort := clientPort;              (* GUI hint For debugging               *)
+  clientAddr4 := TPQConnection2(pq).GetLocalAddress4();
   serverPort := TPQConnection2(pq).GetServerPort();
-  result := testPort(clientPort, serverPort, pq.HostName)
+  serverAddr4 := TPQConnection2(pq).GetServerAddress4();
+  result := testClientPort(clientPort, clientAddr4);
+  result := result and testServerPort(clientPort, serverPort, serverAddr4)
 end { DBHealthy } ;
-
-
-function socketToPort(socket: longint): integer;
-
-var
-  sockaddr: TSockAddr;
-  sz: integer;
-
-begin
-  sz := SizeOf(TSockAddr);
-  fillChar(sockaddr, sz, 0);
-  if fpgetsockname(socket, @sockaddr, @sz) < 0 then
-    result := -1
-  else
-    result := ntohs(sockaddr.sin_port)
-// TODO : Check that the local IP address still appears in the interface list.
-end { socketToPort } ;
-
-
-function TPQConnection2.GetLocalPort(): integer;
-
-var
-  handle2: pointer;
-
-begin
-  if not Connected then
-    exit(-1);
-  handle2 := GetHandle;
-  if handle2 = nil then
-    exit(-1);
-  handle2 := GetTransactionHandle(TSQLHandle(handle2));
-  if handle2 = nil then
-    exit(-1);
-  result := socketToPort(PQSocket(handle2))
-end { TPQConnection2.GetLocalPort } ;
-
-
-function TPQConnection2.GetServerPort(): integer;
-
-var
-  handle2: pointer;
-
-begin
-  if not Connected then
-    exit(-1);
-  handle2 := GetHandle;
-  if handle2 = nil then
-    exit(-1);
-  handle2 := GetTransactionHandle(TSQLHandle(handle2));
-  if handle2 = nil then
-    exit(-1);
-  result := StrToInt(PQPort(handle2))
-// TODO : Is the server IP address available in numeric form?
-end { TPQConnection2.GetServerPort } ;
 
 
 end.

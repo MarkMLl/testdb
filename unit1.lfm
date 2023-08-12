@@ -1,7 +1,7 @@
 object Form1: TForm1
-  Left = 100
+  Left = 128
   Height = 700
-  Top = 44
+  Top = 128
   Width = 600
   Caption = 'Form1'
   ChildSizing.LeftRightSpacing = 6
@@ -59,10 +59,10 @@ object Form1: TForm1
     AnchorSideBottom.Control = Bevel1
     Left = 420
     Height = 30
-    Top = 543
+    Top = 549
     Width = 164
     Anchors = [akLeft, akRight, akBottom]
-    BorderSpacing.Bottom = 16
+    BorderSpacing.Bottom = 14
     Caption = 'Connect'
     OnClick = ButtonConnectClick
     TabOrder = 2
@@ -74,14 +74,17 @@ object Form1: TForm1
     AnchorSideBottom.Control = LabeledEditDatabase
     Left = 420
     Height = 32
-    Top = 201
+    Hint = 'Name or IP4 address'
+    Top = 207
     Width = 164
     Anchors = [akLeft, akRight, akBottom]
-    BorderSpacing.Bottom = 30
+    BorderSpacing.Bottom = 28
     EditLabel.Height = 18
     EditLabel.Width = 164
     EditLabel.Caption = 'Server'
     EditLabel.ParentColor = False
+    ParentShowHint = False
+    ShowHint = True
     TabOrder = 3
     Text = '172.27.172.128'
   end
@@ -89,17 +92,20 @@ object Form1: TForm1
     AnchorSideLeft.Control = ButtonOperate
     AnchorSideRight.Control = ButtonOperate
     AnchorSideRight.Side = asrBottom
-    AnchorSideBottom.Control = ListBoxIsolation
+    AnchorSideBottom.Control = LabelIsolation
     Left = 420
     Height = 32
-    Top = 263
+    Hint = 'Database name'
+    Top = 267
     Width = 164
     Anchors = [akLeft, akRight, akBottom]
-    BorderSpacing.Bottom = 16
+    BorderSpacing.Bottom = 6
     EditLabel.Height = 18
     EditLabel.Width = 164
     EditLabel.Caption = 'Database'
     EditLabel.ParentColor = False
+    ParentShowHint = False
+    ShowHint = True
     TabOrder = 4
     Text = 'open2300'
   end
@@ -110,14 +116,17 @@ object Form1: TForm1
     AnchorSideBottom.Control = LabeledEditPassword
     Left = 420
     Height = 32
-    Top = 433
+    Hint = 'User ID'
+    Top = 443
     Width = 164
     Anchors = [akLeft, akRight, akBottom]
-    BorderSpacing.Bottom = 30
+    BorderSpacing.Bottom = 28
     EditLabel.Height = 18
     EditLabel.Width = 164
     EditLabel.Caption = 'User'
     EditLabel.ParentColor = False
+    ParentShowHint = False
+    ShowHint = True
     TabOrder = 5
     Text = 'markMLl'
     OnKeyUp = LabeledEditUserKeyUp
@@ -129,16 +138,19 @@ object Form1: TForm1
     AnchorSideBottom.Control = ButtonConnect
     Left = 420
     Height = 32
-    Top = 495
+    Hint = 'Password'
+    Top = 503
     Width = 164
     Anchors = [akLeft, akRight, akBottom]
-    BorderSpacing.Bottom = 16
+    BorderSpacing.Bottom = 14
     EchoMode = emPassword
     EditLabel.Height = 18
     EditLabel.Width = 164
     EditLabel.Caption = 'Password'
     EditLabel.ParentColor = False
+    ParentShowHint = False
     PasswordChar = '*'
+    ShowHint = True
     TabOrder = 6
     OnKeyUp = LabeledEditPasswordKeyUp
   end
@@ -149,16 +161,19 @@ object Form1: TForm1
     AnchorSideBottom.Control = LabeledEditUser
     Left = 420
     Height = 32
-    Top = 371
+    Hint = 'Table name'
+    Top = 383
     Width = 164
     Anchors = [akLeft, akRight, akBottom]
-    BorderSpacing.Bottom = 30
+    BorderSpacing.Bottom = 28
     Color = clSilver
     EditLabel.Height = 18
     EditLabel.Width = 164
     EditLabel.Caption = 'Table'
     EditLabel.ParentColor = False
+    ParentShowHint = False
     ReadOnly = True
+    ShowHint = True
     TabOrder = 7
     Text = 'testdb'
   end
@@ -169,10 +184,10 @@ object Form1: TForm1
     AnchorSideBottom.Control = ListBoxOperation
     Left = 420
     Height = 3
-    Top = 589
+    Top = 593
     Width = 164
     Anchors = [akLeft, akRight, akBottom]
-    BorderSpacing.Bottom = 16
+    BorderSpacing.Bottom = 14
     Style = bsRaised
   end
   object ListBoxOperation: TListBox
@@ -182,10 +197,11 @@ object Form1: TForm1
     AnchorSideBottom.Control = ButtonOperate
     Left = 420
     Height = 30
-    Top = 608
+    Hint = 'Operations'
+    Top = 610
     Width = 164
     Anchors = [akLeft, akRight, akBottom]
-    BorderSpacing.Bottom = 16
+    BorderSpacing.Bottom = 14
     ExtendedSelect = False
     Enabled = False
     Items.Strings = (
@@ -195,6 +211,8 @@ object Form1: TForm1
       'Glitch conn.'
     )
     ItemHeight = 24
+    ParentShowHint = False
+    ShowHint = True
     TabOrder = 8
   end
   object ButtonOperate: TButton
@@ -221,17 +239,24 @@ object Form1: TForm1
     AnchorSideBottom.Control = LabeledEditTable
     Left = 420
     Height = 30
-    Top = 311
+    Hint = 'Transaction isolation'
+    Top = 325
     Width = 164
     Anchors = [akLeft, akRight, akBottom]
-    BorderSpacing.Bottom = 30
-    Color = 14737632
+    BorderSpacing.Bottom = 28
+    ExtendedSelect = False
     Font.Color = clSilver
     Items.Strings = (
-      'Isolation'
+      ''
+      'read uncommitted'
+      'read committed'
+      'repeatable read'
+      'serializable'
     )
     ItemHeight = 24
+    ParentShowHint = False
     ParentFont = False
+    ShowHint = True
     TabOrder = 10
   end
   object CheckGroupStatus: TCheckGroup
@@ -241,7 +266,7 @@ object Form1: TForm1
     AnchorSideRight.Side = asrBottom
     AnchorSideBottom.Control = LabeledEditServer
     Left = 420
-    Height = 155
+    Height = 161
     Top = 16
     Width = 164
     Anchors = [akTop, akLeft, akRight, akBottom]
@@ -259,6 +284,18 @@ object Form1: TForm1
     ChildSizing.ControlsPerLine = 1
     ParentBiDiMode = False
     TabOrder = 11
+  end
+  object LabelIsolation: TLabel
+    AnchorSideLeft.Control = ButtonOperate
+    AnchorSideBottom.Control = ListBoxIsolation
+    Left = 420
+    Height = 18
+    Top = 305
+    Width = 54
+    Anchors = [akLeft, akBottom]
+    BorderSpacing.Bottom = 2
+    Caption = 'Isolation'
+    ParentColor = False
   end
   object DataSource1: TDataSource
     DataSet = SQLQuery1
